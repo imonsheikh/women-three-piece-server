@@ -6,7 +6,7 @@ const app = express()
 
 // Check if .env is loading properly
 console.log("Loaded PORT from .env:", process.env.PORT);
-const port = process.env.PORT || 3000
+const port = process.env.PORT || 5000
 
 //Middleware 
 app.use(cors())
@@ -114,6 +114,24 @@ async function run() {
           app.get('/users', verifyToken, verifyAdmin, async(req, res) => {
             const result = await userCollection.find().toArray()
             res.send(result)
+          })
+          app.get('/users/admin/:email', verifyToken, async(req, res)=> {
+            const email = req.params.email 
+            if(email !== req.decoded.email){
+              return res.status(403).send({message: "Forbidden Access"})
+            }
+            try {
+              const query = {email: email}
+              const user = await userCollection.findOne(query) 
+              let admin = false
+              if(user){
+                admin = user.role === 'admin'
+              }
+              res.send({admin})
+            } catch (error) {
+              console.error("Error Fetching admin status: ", error)
+              res.status(500).send({message: 'Failed to fetch admin status'})
+            }
           }) 
           // +++++++++ USER API ends ++++++++++ 
           
@@ -122,12 +140,17 @@ async function run() {
             app.get('/products', async(req, res) => {
               const result = await productCollection.find().toArray()
               res.send(result) 
+            }) 
+            app.post('/products', async(req, res) => {
+              const product = req.body 
+              const result = await productCollection.insertOne(product)
+              res.send(result)
             })
           //++++++++++ Products API ends +++++++++++ 
 
           // ================== 02.Categories API Starts ===============  
             app.get('/categories', async(req, res) => {
-              const result = await categoriesCollection.find().toArray() 
+              const result = await categoriesCollection.find().toArray()
               res.send(result) 
             })
           // ================== Categories API ends ================= 
