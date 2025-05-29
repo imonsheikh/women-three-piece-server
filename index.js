@@ -41,6 +41,8 @@ async function run() {
     const userCollection = client.db('WomenDB').collection('users')
     const productCollection = client.db('WomenDB').collection('productCollection')
     const categoriesCollection = client.db('WomenDB').collection('categoriesCollection')
+    const cartsCollection = client.db('WomenDB').collection('cartsCollection')
+    const ordersCollection = client.db('WomenDB').collection('ordersCollection')
 
     //1.JWT related APIS: Create a jwt token 
     app.post('/jwt', (req, res) => {
@@ -145,12 +147,42 @@ async function run() {
               const product = req.body 
               const result = await productCollection.insertOne(product)
               res.send(result)
+            })  
+            app.delete('/products', async(req, res) => {
+              const id = req.query.id 
+              const query = {_id: ObjectId(id)}
+              const result = await productCollection.deleteOne()
+              res.send(result)
             })
           //++++++++++ Products API ends +++++++++++ 
 
           // ================== 02.Categories API Starts ===============  
             app.get('/categories', async(req, res) => {
               const result = await categoriesCollection.find().toArray()
+              res.send(result) 
+            })
+            app.post('/categories',verifyToken, verifyAdmin, async(req, res) => { 
+              const category = req.body 
+              const result = await categoriesCollection.insertOne(category)
+              res.send(result) 
+            })
+            app.put('/categories/:id',verifyToken, verifyAdmin, async(req, res) => { 
+              const id = req.params.id
+              const {name, image} = req.body
+              const filter = {_id: new ObjectId(id)}
+              const updateDoc = {
+                $set: {
+                  name,
+                  image
+                }
+              } 
+              const result = await categoriesCollection.updateOne(filter, updateDoc)
+              res.send(result) 
+            })
+            app.delete('/categories/:id',verifyToken, verifyAdmin, async(req, res) => { 
+              const id = req.params.id 
+              const query = {_id: new ObjectId(id)}
+              const result = await categoriesCollection.deleteOne(query)
               res.send(result) 
             })
           // ================== Categories API ends ================= 
@@ -162,7 +194,161 @@ async function run() {
             const result = await productCollection.findOne(query)
             res.send(result)  
           })
-          // ================== Product Details ends ================ 
+          // ================== Product Details ends ================   
+
+          // ================== Carts starts ============= 
+            app.get('/carts', async (req, res) => {
+                 const email = req.query.email 
+                 const emailQuery = {userEmail: email}
+                 const result = await cartsCollection.find(emailQuery).toArray() 
+                 res.send(result)
+            })
+            app.post('/cart', async (req, res) => {
+              const product = req.body
+              const {productName, userEmail} = product  
+              //Existing Check
+              const existingProduct = await cartsCollection.findOne({productName, userEmail})  
+              if(existingProduct){
+                return res.status(400).send({message: "product already in cart"})
+              }
+               
+              const result = await cartsCollection.insertOne(product)
+              res.send(result)
+            })  
+            app.patch('/cart/:id/:action', async (req, res) => {
+              const { id, action } = req.params;
+              const cartItem = await cartsCollection.findOne({ _id: new ObjectId(id) });
+              if (!cartItem) return res.status(404).send({ error: "Item not found" });
+            
+              const change = action === "increase" ? 1 : -1;
+              const newQty = cartItem.quantity + change;
+            
+              if (newQty < 1) return res.status(400).send({ error: "Quantity cannot be less than 1" });
+            
+              const newTotal = cartItem.productPrice * newQty;
+            
+              const result = await cartsCollection.updateOne(
+                { _id: new ObjectId(id) },
+                {
+                  $set: {
+                    quantity: newQty,
+                    totalPrice: newTotal,
+                  },
+                }
+              );
+            
+              res.send(result);
+            });  
+            //Delete multiple 
+            app.delete('/cart',verifyToken, async (req, res) => {
+              try {
+                const email = req.query.email;
+                if (!email) {
+                  return res.status(400).send({ error: "Email is required" });
+                }
+            
+                const result = await cartsCollection.deleteMany({ userEmail: email });
+            
+                res.send({
+                  message: "Cart cleared successfully",
+                  deletedCount: result.deletedCount,
+                });
+              } catch (error) {
+                console.error("Error clearing cart:", error);
+                res.status(500).send({ error: "Failed to clear cart" });
+              }
+            }); 
+            //Delete Single 
+            app.delete("/cart/:id",verifyToken, async (req, res) => {
+              const id = req.params.id;
+            
+              try {
+                const result = await cartsCollection.deleteOne({ _id: new ObjectId(id) });
+            
+                if (result.deletedCount === 1) {
+                  res.send({ success: true, message: "Item removed from cart." });
+                } else {
+                  res.status(404).send({ success: false, message: "Item not found." });
+                }
+              } catch (error) {
+                console.error("Error deleting cart item:", error);
+                res.status(500).send({ success: false, message: "Internal server error." });
+              }
+            });
+            
+          // ================== Carts ends =============
+          
+          // ================== Order Starts =========== 
+          app.post("/order", async (req, res) => {
+            const order = req.body;
+          
+            try {
+              // Order insert
+              const result = await ordersCollection.insertOne(order);
+          
+              if (result.insertedId) {
+                // Cart delete
+                await cartsCollection.deleteMany({ userEmail: order.userEmail });
+          
+                return res.send({
+                  success: true,
+                  insertedId: result.insertedId,
+                  message: "Order placed successfully",
+                });
+              } else {
+                return res.status(400).send({
+                  success: false,
+                  message: "Failed to place order",
+                });
+              }
+            } catch (err) {
+              console.error("❌ Error placing order:", err);
+              return res.status(500).send({
+                success: false,
+                message: "Internal server error",
+              });
+            }
+          }); 
+          app.get("/orders", async (req, res) => {
+            const email = req.query.email;
+            if (!email) {
+              return res.status(400).json({ error: "Email query parameter is required" });
+            }
+          
+            try {
+              const orders = await ordersCollection
+                .find({ userEmail: email })
+                .sort({ date: -1 }) // নতুন অর্ডার আগে দেখাবে
+                .toArray();
+          
+              res.json(orders);
+            } catch (err) {
+              console.error("Error fetching orders:", err);
+              res.status(500).json({ error: "Internal server error" });
+            }
+          });  
+          //3
+          app.patch("/orders/:id", async (req, res) => {
+            const { status } = req.body;
+            const result = await ordersCollection.updateOne(
+              { _id: new ObjectId(req.params.id) },
+              { $set: { status } }
+            );
+            res.send(result);
+          });  
+          //4
+          app.get("/all-orders",verifyToken, verifyAdmin, async (req, res) => {
+            try {
+              const orders = await ordersCollection.find().toArray();
+              res.status(200).send(orders);
+            } catch (error) {
+              console.error("Error fetching all orders:", error);
+              res.status(500).send({ error: "Failed to fetch all orders" });
+            }
+          });
+          
+
+          // ================== Order Ends =============
 
 
 
