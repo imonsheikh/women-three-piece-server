@@ -13,7 +13,8 @@ app.use(cors({
   origin: [
             'http://localhost:5173',
             'http://localhost:5174',
-           'https://woman-three-piece.web.app'
+           'https://woman-three-piece.web.app',
+           'https://e-commerce-website0001.netlify.app'
           ],
   // credentials: true
 }))
@@ -48,6 +49,7 @@ async function run() {
     const userCollection = client.db('WomenDB').collection('users')
     const productCollection = client.db('WomenDB').collection('productCollection')
     const categoriesCollection = client.db('WomenDB').collection('categoriesCollection')
+    const subCategoriesCollection = client.db('WomenDB').collection('subCategoriesCollection')
     const cartsCollection = client.db('WomenDB').collection('cartsCollection')
     const ordersCollection = client.db('WomenDB').collection('ordersCollection')
 
@@ -212,6 +214,57 @@ async function run() {
     })
     // ================== Categories API ends ================= 
 
+
+    // ================== Sub Categories API starts =================  
+    
+// get all subcategories
+app.get('/subcategories', async (req, res) => {
+  const result = await subCategoriesCollection.find().toArray()
+  res.send(result)
+})
+
+// add new subcategory (only admin)
+app.post('/subcategories', verifyToken, verifyAdmin, async (req, res) => {
+  const { name, categoryId } = req.body
+  if (!name || !categoryId) {
+    return res.status(400).send({ error: "name and categoryId required" })
+  }
+
+  const newSubCategory = {
+    name,
+    categoryId,
+    createdAt: new Date()
+  }
+
+  const result = await subCategoriesCollection.insertOne(newSubCategory)
+ res.send({ _id: result.insertedId, ...newSubCategory });
+})
+
+// update subcategory (only admin)
+app.put('/subcategories/:id', verifyToken, verifyAdmin, async (req, res) => {
+  const id = req.params.id
+  const { name, categoryId } = req.body
+  const filter = { _id: new ObjectId(id) }
+  const updateDoc = {
+    $set: {
+      name,
+      categoryId,
+      updatedAt: new Date()
+    }
+  }
+  const result = await subCategoriesCollection.updateOne(filter, updateDoc)
+  res.send(result)
+})
+
+// delete subcategory (only admin)
+app.delete('/subcategories/:id', verifyToken, verifyAdmin, async (req, res) => {
+  const id = req.params.id
+  const query = { _id: new ObjectId(id) }
+  const result = await subCategoriesCollection.deleteOne(query)
+  res.send(result)
+})
+    // ================== Sub Categories API ends ================= 
+
     // ================== Product Details starts ================ 
     app.get('/product-details/:id', async (req, res) => {
       const id = req.params.id
@@ -251,39 +304,34 @@ async function run() {
 
       const result = await cartsCollection.insertOne(product)
       res.send(result)
-    })
-    app.patch('/cart/:id/:action', async (req, res) => {
-      const {
-        id,
-        action
-      } = req.params;
-      const cartItem = await cartsCollection.findOne({
-        _id: new ObjectId(id)
-      });
-      if (!cartItem) return res.status(404).send({
-        error: "Item not found"
-      });
+    })  
 
-      const change = action === "increase" ? 1 : -1;
-      const newQty = cartItem.quantity + change;
+  app.patch('/cart/:id/:action', async (req, res) => {
+  const { id, action } = req.params;
 
-      if (newQty < 1) return res.status(400).send({
-        error: "Quantity cannot be less than 1"
-      });
+  const change = action === "increase" ? 1 : -1;
 
-      const newTotal = cartItem.productPrice * newQty;
+  // Step 1: Only allow if quantity will remain >= 1
+  const cartItem = await cartsCollection.findOne({ _id: new ObjectId(id) });
+  if (!cartItem) return res.status(404).send({ error: "Item not found" });
 
-      const result = await cartsCollection.updateOne({
-        _id: new ObjectId(id)
-      }, {
-        $set: {
-          quantity: newQty,
-          totalPrice: newTotal,
-        },
-      });
+  const newQty = cartItem.quantity + change;
+  if (newQty < 1) return res.status(400).send({ error: "Quantity cannot be less than 1" });
 
-      res.send(result);
-    });
+  // Step 2: Perform atomic update using $inc and $set
+  const result = await cartsCollection.updateOne(
+    { _id: new ObjectId(id) },
+    {
+      $inc: { quantity: change },
+      $set: {
+        totalPrice: (cartItem.productPrice * newQty),
+      },
+    }
+  );
+
+  res.send(result);
+});
+
     //Delete multiple 
     app.delete('/cart', verifyToken, async (req, res) => {
       try {
