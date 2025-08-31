@@ -389,38 +389,51 @@ app.delete('/subcategories/:id', verifyToken, verifyAdmin, async (req, res) => {
     // ================== Carts ends =============
 
     // ================== Order Starts =========== 
-    app.post("/order", async (req, res) => {
-      const order = req.body;
+  app.post("/order", async (req, res) => {
+  const order = req.body;
 
-      try {
-        // Order insert
-        const result = await ordersCollection.insertOne(order);
+  try {
+    // 1. Generate unique invoice number
+    const invoiceNo =  `INV-${Math.floor(10000000 + Math.random() * 90000000)}`;
+    order.invoiceNo = invoiceNo;
+    order.date = new Date(); // Order date
 
-        if (result.insertedId) {
-          // Cart delete
-          await cartsCollection.deleteMany({
-            userEmail: order.userEmail
-          });
+    // 2. Order insert
+    const result = await ordersCollection.insertOne(order);
 
-          return res.send({
-            success: true,
-            insertedId: result.insertedId,
-            message: "Order placed successfully",
-          });
-        } else {
-          return res.status(400).send({
-            success: false,
-            message: "Failed to place order",
-          });
-        }
-      } catch (err) {
-        console.error(" Error placing order:", err);
-        return res.status(500).send({
-          success: false,
-          message: "Internal server error",
-        });
+    if (result.insertedId) {
+      // 3. Cart delete
+      await cartsCollection.deleteMany({ userEmail: order.userEmail });
+
+      // 4. Stock Update
+      for (const item of order.items) {
+        await productCollection.updateOne(
+          { _id: new ObjectId(item.productId) },
+          { $inc: { stock: -item.quantity } }
+        );
       }
+
+      return res.send({
+        success: true,
+        insertedId: result.insertedId,
+        invoiceNo: invoiceNo, // <-- send to frontend
+        message: "Order placed successfully",
+      });
+    } else {
+      return res.status(400).send({
+        success: false,
+        message: "Failed to place order",
+      });
+    }
+  } catch (err) {
+    console.error("Error placing order:", err);
+    return res.status(500).send({
+      success: false,
+      message: "Internal server error",
     });
+  }
+});
+
     app.get("/orders", async (req, res) => {
       const email = req.query.email;
       if (!email) {
@@ -498,7 +511,152 @@ app.delete('/subcategories/:id', verifyToken, verifyAdmin, async (req, res) => {
       res.send({
         count
       });
+    }); 
+   // GET /stats/revenue
+app.get("/stats/revenue", async (req, res) => {
+  try {
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+
+    const [todayRevenue, monthRevenue, totalRevenue] = await Promise.all([
+      ordersCollection.aggregate([
+        { $match: { date: { $gte: today } } },
+        { $group: { _id: null, total: { $sum: "$total" } } },
+      ]).toArray(),
+
+      ordersCollection.aggregate([
+        { $match: { date: { $gte: monthStart } } },
+        { $group: { _id: null, total: { $sum: "$total" } } },
+      ]).toArray(),
+
+      ordersCollection.aggregate([
+        { $group: { _id: null, total: { $sum: "$total" } } },
+      ]).toArray(),
+    ]);
+
+    res.json({
+      today: todayRevenue[0]?.total || 0,
+      month: monthRevenue[0]?.total || 0,
+      lifetime: totalRevenue[0]?.total || 0,
     });
+  } catch (err) {
+    console.error("Error in /stats/revenue", err);
+    res.status(500).json({ error: "Failed to fetch revenue stats" });
+  }
+}); 
+
+// GET /orders/recent?limit=5
+app.get("/orders/recent", async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 5;
+
+     const orders = await ordersCollection.find({}, { projection: { invoiceNo: 1, customer: 1, total: 1, status: 1, date: 1 } })
+      .sort({ date: -1 })
+      .limit(limit)
+      .toArray();
+
+    res.json(orders);
+  } catch (err) {
+    console.error("Error in /orders/recent", err);
+    res.status(500).json({ error: "Failed to fetch recent orders" });
+  }
+}); 
+
+// GET /products/low-stock?limit=5
+app.get("/products/low-stock", async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 5;
+
+     const products = await productCollection.find({ stock: { $lt: 5 } }, { projection: { productName: 1, stock: 1 } })
+      .sort({ stock: 1 })
+      .limit(limit)
+      .toArray();
+
+    res.json(products);
+  } catch (err) {
+    console.error("Error in /products/low-stock", err);
+    res.status(500).json({ error: "Failed to fetch low stock products" });
+  }
+});
+
+
+
+// Sales Trend (last 7 days revenue/orders)
+app.get("/stats/trend", async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 7;
+    const sinceDate = new Date();
+    sinceDate.setDate(sinceDate.getDate() - days);
+
+    const data = await ordersCollection.aggregate([
+      { $match: { date: { $gte: sinceDate } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
+          revenue: { $sum: "$total" },
+          orders: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]).toArray();
+
+    res.json(data.map(d => ({
+      date: d._id,
+      revenue: d.revenue,
+      orders: d.orders
+    })));
+  } catch (err) {
+    console.error("Error in /stats/trend:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Top Selling Products
+app.get("/stats/top-products", async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 5;
+
+    const data = await ordersCollection.aggregate([
+      { $unwind: "$items" },
+      {
+        $group: {
+          _id: "$items.productId",
+          productName: { $first: "$items.productName" },
+          salesCount: { $sum: "$items.quantity" }
+        }
+      },
+      { $sort: { salesCount: -1 } },
+      { $limit: limit }
+    ]).toArray();
+
+    res.json(data);
+  } catch (err) {
+    console.error("Error in /stats/top-products:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.get("/users/active", async (req, res) => {
+  try {
+    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
+
+    const activeCount = await userCollection.countDocuments({
+      lastActive: { $gte: fiveMinAgo }
+    });
+
+    res.json({ count: activeCount });
+  } catch (err) {
+    console.error("Error in /users/active:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+
+
     // ================== Admin Home ends =============
 
 
