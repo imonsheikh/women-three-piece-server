@@ -48,6 +48,7 @@ async function run() {
 
     const userCollection = client.db('WomenDB').collection('users')
     const productCollection = client.db('WomenDB').collection('productCollection')
+    const bannersCollection = client.db('WomenDB').collection('bannersCollection')
     const categoriesCollection = client.db('WomenDB').collection('categoriesCollection')
     const subCategoriesCollection = client.db('WomenDB').collection('subCategoriesCollection')
     const cartsCollection = client.db('WomenDB').collection('cartsCollection')
@@ -176,6 +177,42 @@ async function run() {
     })
     //++++++++++ Products API ends +++++++++++ 
 
+    // ================== 02.BannerADD API Starts ===============  
+  app.get('/banners', async (req, res) => {
+  const result = await bannersCollection.find().toArray()
+  res.send(result)
+})
+
+app.post('/banners', verifyToken, verifyAdmin, async (req, res) => {
+  const banner = req.body 
+  // console.log(banner);
+  
+  const result = await bannersCollection.insertOne(banner)
+  res.send(result)
+})
+
+app.put('/banners/:id', verifyToken, verifyAdmin, async (req, res) => {
+  const id = req.params.id
+  const { image } = req.body
+
+  const filter = { _id: new ObjectId(id) }
+  const updateDoc = {
+    $set: { image }
+  }
+
+  const result = await bannersCollection.updateOne(filter, updateDoc)
+  res.send(result)
+})
+
+app.delete('/banners/:id', verifyToken, verifyAdmin, async (req, res) => {
+  const id = req.params.id
+  const query = { _id: new ObjectId(id) }
+  const result = await bannersCollection.deleteOne(query)
+  res.send(result)
+})
+
+    // ================== 02.BannerADD API ends ===============  
+    
     // ================== 02.Categories API Starts ===============  
     app.get('/categories', async (req, res) => {
       const result = await categoriesCollection.find().toArray()
@@ -213,6 +250,10 @@ async function run() {
       res.send(result)
     })
     // ================== Categories API ends ================= 
+     // ================================
+// Banner API
+// ================================
+
 
 
     // ================== Sub Categories API starts =================  
