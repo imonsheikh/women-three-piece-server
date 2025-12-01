@@ -2,6 +2,9 @@ require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
 const jwt = require('jsonwebtoken')
+const multer = require('multer')
+const { v2: cloudinary } = require('cloudinary');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const app = express()
 
 // Check if .env is loading properly
@@ -18,7 +21,57 @@ app.use(cors({
           ],
   // credentials: true
 }))
-app.use(express.json())
+app.use(express.json()) 
+
+//-- Cloudinary Configuration -- 
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,  
+}) 
+
+// -- Multer + cloudinary storage config 
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: "ecommerce_products", // The folder in cloudinary where images will be stored
+  }
+})
+const upload = multer({storage})
+
+//upload Route 
+app.post('/upload-image', upload.single('image'), (req, res) => {
+  try {
+    res.json({
+      success: true,
+      url: req.file.path,
+      public_id: req.file.filename})
+  } catch (err) {
+    res.status(500).json({success: false, message: err.message})
+  }
+})
+app.post('/upload-banner', upload.single('image'), (req, res) => {
+ try {
+  res.json({
+    success: true,
+    url: req.file.path,
+    public_id: req.file.filename
+  })
+ } catch (err) {
+  res.status(500).json({success: false, message: err.message})
+ }
+})
+app.post('/upload-category', upload.single('image'), (req, res) => {
+ try {
+  res.json({
+    success: true,
+    url: req.file.path,
+    public_id: req.file.filename
+  })
+ } catch (err) {
+  res.status(500).json({success: false, message: err.message})
+ }
+})
 
 
 
