@@ -123,7 +123,7 @@ async function run() {
     const verifyToken = (req, res, next) => {
       //    console.log('inside the verify token', req.headers.authorization); 
       if (!req.headers.authorization) {
-        return res.status('401').send({
+        return res.status(401).send({
           message: 'UnAuthorized Access'
         })
       }
@@ -179,7 +179,51 @@ async function run() {
     app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
       const result = await userCollection.find().toArray()
       res.send(result)
-    })
+    }) 
+    /**
+ * DELETE user
+ */
+    app.delete("/users/:id", verifyToken, verifyAdmin, async (req, res) => {
+     const { id } = req.params;
+
+     const result = await userCollection.deleteOne({
+    _id: new ObjectId(id),
+  });
+
+  res.send(result);
+}); 
+
+/**
+ * BLOCK / UNBLOCK user
+ */
+app.patch("/users/block/:id", verifyToken, verifyAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { isBlocked } = req.body;
+
+  const result = await userCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { isBlocked } }
+  );
+
+  res.send(result);
+}); 
+/* ================= USER LAST LOGIN ================= */
+/**
+ * call this after login success
+ */
+app.patch("/users/last-login", verifyToken, async (req, res) => {
+  const email = req.decoded.email;
+  // console.log("cgecj", email);
+  
+
+  await userCollection.updateOne(
+    { email },
+    { $set: { lastLoginAt: new Date() } }
+  );
+
+  res.send({ success: true });
+});
+
     app.get('/users/admin/:email', verifyToken, async (req, res) => {
       const email = req.params.email
       if (email !== req.decoded.email) {
@@ -543,7 +587,7 @@ app.delete('/subcategories/:id', verifyToken, verifyAdmin, async (req, res) => {
           })
           .sort({
             date: -1
-          }) // নতুন অর্ডার আগে দেখাবে
+          }) // show new orders first
           .toArray();
 
         res.json(orders);
@@ -579,7 +623,63 @@ app.delete('/subcategories/:id', verifyToken, verifyAdmin, async (req, res) => {
           error: "Failed to fetch all orders"
         });
       }
+    }); 
+    // ================== Order Delete ==================
+     app.delete("/orders/:id", verifyToken, verifyAdmin, async (req, res) => {
+     const orderId = req.params.id;
+
+     try {
+    // 1. first order find out (need for stock restore)
+    const order = await ordersCollection.findOne({
+      _id: new ObjectId(orderId),
     });
+
+    if (!order) {
+      return res.status(404).send({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    // 2. (OPTIONAL but professional) Stock Restore
+    if (order.items && order.items.length > 0) {
+      for (const item of order.items) {
+        await productCollection.updateOne(
+          { _id: new ObjectId(item.productId) },
+          {
+            $inc: {
+              stock: item.quantity, // stock return
+            },
+          }
+        );
+      }
+    }
+
+    // 3. Order delete
+    const result = await ordersCollection.deleteOne({
+      _id: new ObjectId(orderId),
+    });
+
+    if (result.deletedCount === 1) {
+      res.send({
+        success: true,
+        message: "Order deleted successfully",
+      });
+    } else {
+      res.status(400).send({
+        success: false,
+        message: "Failed to delete order",
+      });
+    }
+  } catch (error) {
+    console.error("Error deleting order:", error);
+    res.status(500).send({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
     // ================== Order Ends =============
 
     // ================== Admin Home starts ============= 
